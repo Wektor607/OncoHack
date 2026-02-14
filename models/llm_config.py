@@ -11,7 +11,61 @@ from .design_recommender import (
     MockProvider
 )
 
+# llm_config.py
 
+import os
+from dataclasses import dataclass
+
+
+@dataclass
+class LLMConfig:
+    provider: str
+    model: str
+    api_key: str | None = None
+    base_url: str | None = None
+
+    @staticmethod
+    def from_env():
+        return LLMConfig(
+            provider=os.getenv("LLM_PROVIDER", "ollama"),
+            model=os.getenv("LLM_MODEL", "llama3"),
+            api_key=os.getenv("LLM_API_KEY"),
+            base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434")
+        )
+
+def create_llm_provider(config):
+    provider = config.provider.lower()
+
+    if provider == "claude":
+        return ClaudeProvider(
+            api_key=config.api_key,
+            model=config.model
+        )
+
+    elif provider == "openai":
+        return OpenAIProvider(
+            api_key=config.api_key,
+            model=config.model
+        )
+
+    elif provider == "ollama":
+        return OllamaProvider(
+            model=config.model,
+            base_url=config.base_url
+        )
+
+    elif provider == "lmstudio":
+        return LMStudioProvider(
+            model=config.model,
+            base_url=config.base_url
+        )
+
+    elif provider == "mock":
+        return MockProvider()
+
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider}")
+    
 # ============================================================================
 # ВЫБЕРИТЕ ПРОВАЙДЕР (раскомментируйте нужный)
 # ============================================================================
@@ -43,11 +97,11 @@ from .design_recommender import (
 # Требуется установка: https://ollama.ai
 # Затем: ollama pull llama3 (или другая модель)
 
-def get_llm_provider():
-    return OllamaProvider(
-        model="mistral",  # или "mistral", "mixtral", "phi"
-        base_url="http://localhost:11434"
-    )
+# def get_llm_provider():
+#     return OllamaProvider(
+#         model="mistral",  # Changed to mistral (4.4GB) - mixtral requires 25GB RAM
+#         base_url="http://localhost:11434"
+#     )
 
 
 # ---- 4. LM Studio - Локальные модели с GUI ----

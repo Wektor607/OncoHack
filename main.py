@@ -11,7 +11,7 @@ import argparse
 from typing import Optional
 from extraction.pk_source import get_pk_data_from_all_sources
 from models.design_recommender import DesignRecommender, print_recommendation, save_recommendation_to_json
-from models.llm_config import get_llm_provider
+from models.llm_config import LLMConfig, create_llm_provider
 
 
 def analyze_drug(
@@ -92,10 +92,13 @@ def analyze_drug(
     print("="*80 + "\n")
 
     # Получаем LLM провайдер из конфига
-    llm_provider = get_llm_provider()
+    # llm_provider = get_llm_provider()
+
+    config = LLMConfig.from_env()
+    llm = create_llm_provider(config)
 
     # Создаём рекомендатор
-    recommender = DesignRecommender(llm_provider)
+    recommender = DesignRecommender(llm)
 
     # Получаем рекомендацию
     try:

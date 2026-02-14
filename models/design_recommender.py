@@ -119,19 +119,11 @@ class DesignRecommender:
 
         # Рассчитываем размер выборки на основе рекомендации LLM
         if recommendation["cv_intra_used"] and recommendation["design"]:
-            sample_size_result = calculate_sample_size(
-                design=recommendation["design"],
-                cv_intra=recommendation["cv_intra_used"],
-                alpha=alpha,
-                power=power,
-                dropout_rate=dropout_rate
-            )
-
             # Добавляем детали расчета
-            recommendation["sample_size_calculation"] = sample_size_result
+            recommendation["sample_size_calculation"] = result
             # Обновляем n_subjects из расчета
-            recommendation["n_subjects"] = sample_size_result["n_with_dropout"]
-            recommendation["n_subjects_base"] = sample_size_result["n_total"]
+            recommendation["n_subjects"] = result["n_with_dropout"]
+            recommendation["n_subjects_base"] = result["n_total"]
 
         # Добавляем данные из PKRecord для сохранения в JSON
         recommendation["pk_data"] = [self._pk_record_to_dict(r) for r in records]
