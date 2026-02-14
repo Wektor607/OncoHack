@@ -1,0 +1,47 @@
+{
+  "design": "Параллельный",
+  "n_subjects": 8,
+  "cv_intra_used": 30.8,
+  "t_half_used": 57.0,
+  "reasoning": "T½ of 57 hours exceeds 24 hours, making crossover designs impractical due to prolonged washout requirements. The moderate variability (CVintra = 30.8%) and practical sample size from the pre-calculated table suggest using a parallel design with 8 subjects for adequate power while keeping the study feasible.",
+  "sources": [],
+  "drug": "Amlodipine",
+  "dosage_form": "tablet",
+  "sample_size_calculation": {
+    "n_per_sequence": 3,
+    "n_total": 6,
+    "n_with_dropout": 8,
+    "formula_used": "N = 2(Z_α + Z_β)² × σ² / δ²",
+    "parameters": {
+      "cv_intra": 30.8,
+      "alpha": 0.05,
+      "power": 0.8,
+      "theta1": 0.8,
+      "theta2": 1.25,
+      "dropout_rate": 0.2,
+      "z_alpha": 1.96,
+      "z_beta": 0.8416,
+      "sigma_squared": 0.072092,
+      "ln_theta1": -0.2231
+    },
+    "reasoning": "Расчёт размера выборки для исследования биоэквивалентности:\n\n1. Исходные параметры:\n   • CVintra = 30.8%\n   • α (уровень значимости) = 0.05 (двусторонний тест)\n   • Power (мощность) = 0.8 (80%)\n   • Границы биоэквивалентности: 0.80 - 1.25\n   • Ожидаемое выбывание: 20%\n\n2. Критические значения:\n   • Z_α/2 = 1.9600 (квантиль стандартного нормального распределения для α/2 = 0.025)\n   • Z_β = 0.8416 (квантиль для мощности 80%)\n\n3. Расчёт дисперсии:\n   • σ² = (ln(1 + CV))² = (ln(1 + 0.3080))² = (ln(1.3080))²\n   • σ² = (0.2685)² = 0.072092\n\n4. Расчёт ln(Θ₁):\n   • ln(Θ₁) = ln(0.8) = -0.2231\n   • (ln Θ₁)² = 0.049793\n\n5. Применение формулы:\n   N = 2(Z_α + Z_β)² × σ² / δ²\n\n   N = 5.68 ≈ 6 участников\n\n6. Учёт выбывания:\n   • Базовый размер: 6 участников\n   • С учётом 20% dropout: 6 / 0.80 = 8 участников\n\nРекомендация: Набрать 8 участников для обеспечения 80% мощности исследования\nпри уровне значимости 95% и ожидаемом выбывании 20%."
+  },
+  "n_subjects_base": 6,
+  "pk_data": [
+    {
+      "source": "PubMed",
+      "study_id": null,
+      "title": null,
+      "cmax": 90.0,
+      "cmax_unit": null,
+      "tmax": 57.0,
+      "tmax_unit": null,
+      "auc": 90.0,
+      "auc_unit": null,
+      "t_half": 57.0,
+      "t_half_unit": null,
+      "cv_intra": 30.8,
+      "n_subjects": 60
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+================================================================================
+РЕКОМЕНДАЦИЯ ПО ДИЗАЙНУ ИССЛЕДОВАНИЯ: Amlodipine
+================================================================================
+
+Дизайн: Параллельный
+Количество участников: 8
+CVintra (использовано): 30.8%
+T½ (использовано): 57.0 часов
+
+ОБОСНОВАНИЕ:
+--------------------------------------------------------------------------------
+T½ of 57 hours exceeds 24 hours, making crossover designs impractical due to prolonged washout requirements. The moderate variability (CVintra = 30.8%) and practical sample size from the pre-calculated table suggest using a parallel design with 8 subjects for adequate power while keeping the study feasible.
+
+
+ИСТОЧНИКИ ДАННЫХ:
+--------------------------------------------------------------------------------
+
+1. PubMed
