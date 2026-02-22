@@ -2,182 +2,98 @@
 Конфигурация LLM провайдеров.
 Измените этот файл для выбора нужной модели.
 """
-
+import os
 from .design_recommender import (
     ClaudeProvider,
     OpenAIProvider,
+    GroqProvider,
+    GeminiProvider,
     OllamaProvider,
     LMStudioProvider,
     MockProvider
 )
 
-# llm_config.py
+# ============================================================================
+# ПРОВАЙДЕР ДЛЯ ГЕНЕРАЦИИ ОБОСНОВАНИЯ (reasoning)
+# Раскомментируйте ОДИН из вариантов ниже
+# ============================================================================
 
-import os
-from dataclasses import dataclass
+# ---- Ollama — локально, без интернета ★ ТЕКУЩИЙ ВЫБОР ----
+# Установка: https://ollama.ai
+# Рекомендуемые модели:
+#   ollama pull qwen2.5:14b   — лучшее качество (~8GB)
+#   ollama pull mistral-nemo  — хороший баланс (~4GB)
+def get_llm_provider():
+    """Основной LLM для анализа данных.
+    Управляется переменными окружения из .env:
+      LLM_PROVIDER  — провайдер: ollama | groq | gemini | claude | mock
+      OLLAMA_MODEL  — модель (для Ollama)
+      OLLAMA_BASE_URL — URL сервера Ollama
+      GROQ_API_KEY / GEMINI_API_KEY / CLAUDE_API_KEY — ключи для облачных LLM
+    """
+    provider = os.getenv("LLM_PROVIDER", "ollama").lower()
 
-
-@dataclass
-class LLMConfig:
-    provider: str
-    model: str
-    api_key: str | None = None
-    base_url: str | None = None
-
-    @staticmethod
-    def from_env():
-        return LLMConfig(
-            provider=os.getenv("LLM_PROVIDER", "ollama"),
-            model=os.getenv("LLM_MODEL", "llama3"),
-            api_key=os.getenv("LLM_API_KEY"),
-            base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434")
-        )
-
-def create_llm_provider(config):
-    provider = config.provider.lower()
-
-    if provider == "claude":
-        return ClaudeProvider(
-            api_key=config.api_key,
-            model=config.model
-        )
-
-    elif provider == "openai":
-        return OpenAIProvider(
-            api_key=config.api_key,
-            model=config.model
-        )
-
-    elif provider == "ollama":
+    if provider == "ollama":
         return OllamaProvider(
-            model=config.model,
-            base_url=config.base_url
+            model=os.getenv("OLLAMA_MODEL", "qwen2.5:14b"),
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
         )
-
-    elif provider == "lmstudio":
-        return LMStudioProvider(
-            model=config.model,
-            base_url=config.base_url
+    elif provider == "groq":
+        return GroqProvider(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
         )
-
+    elif provider == "gemini":
+        return GeminiProvider(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        )
+    elif provider == "claude":
+        return ClaudeProvider(
+            api_key=os.getenv("CLAUDE_API_KEY"),
+            model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
+        )
     elif provider == "mock":
         return MockProvider()
-
     else:
-        raise ValueError(f"Unknown LLM provider: {provider}")
-    
-# ============================================================================
-# ВЫБЕРИТЕ ПРОВАЙДЕР (раскомментируйте нужный)
-# ============================================================================
-
-# ---- 1. Claude (Anthropic) - Лучшее качество ----
-# def get_llm_provider():
-#     """
-#     Использует Claude API для анализа данных.
-
-#     Чтобы настроить:
-#     1. Получите API ключ: https://console.anthropic.com/
-#     2. Замените "YOUR_API_KEY_HERE" на ваш ключ
-#     """
-#     return ClaudeProvider(
-#         api_key="YOUR_API_KEY_HERE",  # ← ВСТАВЬТЕ ВАШ API КЛЮЧ СЮДА
-#         model="claude-sonnet-4-20250514"  # или "claude-opus-4-20250514" для лучшего качества
-#     )
-
-
-# ---- 2. OpenAI (GPT-4) - Хорошее качество ----
-# def get_llm_provider():
-#     return OpenAIProvider(
-#         api_key="your-openai-api-key-here",
-#         model="gpt-4"  # или "gpt-3.5-turbo" (дешевле)
-#     )
-
-
-# ---- 3. Ollama - Локальные open-source модели (БЕСПЛАТНО!) ----
-# Требуется установка: https://ollama.ai
-# Затем: ollama pull llama3 (или другая модель)
-
-# def get_llm_provider():
-#     return OllamaProvider(
-#         model="mistral",  # Changed to mistral (4.4GB) - mixtral requires 25GB RAM
-#         base_url="http://localhost:11434"
-#     )
-
-
-# ---- 4. LM Studio - Локальные модели с GUI ----
-# Скачайте: https://lmstudio.ai
-# Запустите сервер в LM Studio (Local Server)
-#
-# def get_llm_provider():
-#     return LMStudioProvider(
-#         model="local-model",  # имя модели в LM Studio
-#         base_url="http://localhost:1234/v1"
-#     )
-
-
-# ---- 5. Mock - Для тестирования без API ----
-# def get_llm_provider():
-#     """Возвращает mock провайдер для тестирования."""
-#     print("⚠️  Используется MockProvider (тестовый режим)")
-#     print("💡 Для реальных результатов настройте провайдер в llm_config.py\n")
-#     return MockProvider()
+        raise ValueError(f"Неизвестный LLM_PROVIDER: {provider}")
 
 
 # ============================================================================
-# ИНСТРУКЦИИ ПО НАСТРОЙКЕ
+# ПРОВАЙДЕР ДЛЯ ПЕРЕВОДА НА РУССКИЙ ЯЗЫК (translation)
+# Раскомментируйте ОДИН из вариантов ниже
 # ============================================================================
 
-"""
-🔧 КАК НАСТРОИТЬ:
+def get_translate_provider():
+    """LLM для перевода обоснования на русский язык.
+    Управляется переменными окружения из .env:
+      TRANSLATE_PROVIDER — провайдер: groq | gemini | claude | ollama | same
+                           "same" — использовать тот же провайдер, что и LLM_PROVIDER
+      GROQ_API_KEY / GEMINI_API_KEY / CLAUDE_API_KEY — ключи
+    """
+    provider = os.getenv("TRANSLATE_PROVIDER", "groq").lower()
 
-1. Раскомментируйте нужный провайдер выше
-2. Закомментируйте MockProvider (текущий по умолчанию)
-3. Добавьте API ключ (если нужен)
-
-📝 ПРИМЕРЫ:
-
-A) Использовать Claude:
-   - Получите API ключ: https://console.anthropic.com/
-   - Раскомментируйте секцию "1. Claude"
-   - Вставьте ваш api_key
-
-B) Использовать Ollama (бесплатно, локально):
-   - Установите: curl -fsSL https://ollama.ai/install.sh | sh
-   - Скачайте модель: ollama pull llama3
-   - Раскомментируйте секцию "3. Ollama"
-
-C) Использовать LM Studio (бесплатно, с GUI):
-   - Скачайте: https://lmstudio.ai
-   - Загрузите модель в LM Studio
-   - Запустите Local Server в LM Studio
-   - Раскомментируйте секцию "4. LM Studio"
-
-🌟 РЕКОМЕНДУЕМЫЕ OPEN-SOURCE МОДЕЛИ для Ollama:
-
-- llama3 (Meta) - Универсальная, хорошее качество
-- mistral (Mistral AI) - Быстрая, эффективная
-- mixtral (Mistral AI) - Более мощная версия Mistral
-- phi (Microsoft) - Компактная, быстрая
-- qwen (Alibaba) - Хорошо работает с медицинскими данными
-
-Установка моделей:
-  ollama pull llama3
-  ollama pull mistral
-  ollama pull mixtral
-
-Запуск Ollama сервера:
-  ollama serve
-
-💰 СТОИМОСТЬ API:
-
-Claude API:
-  - Sonnet: ~$3 за 1M input токенов
-  - Opus: ~$15 за 1M input токенов
-
-OpenAI:
-  - GPT-4: ~$30 за 1M input токенов
-  - GPT-3.5: ~$0.5 за 1M input токенов
-
-Ollama/LM Studio:
-  - БЕСПЛАТНО (работает локально)
-"""
+    if provider == "same":
+        return None  # DesignRecommender использует основной LLM
+    elif provider == "groq":
+        return GroqProvider(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        )
+    elif provider == "gemini":
+        return GeminiProvider(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        )
+    elif provider == "claude":
+        return ClaudeProvider(
+            api_key=os.getenv("CLAUDE_API_KEY"),
+            model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
+        )
+    elif provider == "ollama":
+        return OllamaProvider(
+            model=os.getenv("OLLAMA_MODEL", "qwen2.5:14b"),
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
+        )
+    else:
+        raise ValueError(f"Неизвестный TRANSLATE_PROVIDER: {provider}")

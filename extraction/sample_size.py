@@ -110,11 +110,17 @@ def calculate_sample_size(
     #     formula = "N = 2(Zα + Zβ)² / k²  (RSABE)"
     #     sequences = 2
     elif "параллельный" in design.lower() or "parallel" in design.lower():
-        # N = 2(Z_α + Z_β)² σ² / δ²
-        # Для параллельного дизайна используем δ = ln(theta2) - ln(theta1)
-        delta = math.log(theta2) - math.log(theta1)
-        n_base = 2 * ((z_alpha + z_beta)**2) * sigma_squared / (delta**2)
-        formula = "N = 2(Z_α + Z_β)² × σ² / δ²"
+        # Параллельный дизайн требует учёта ПОЛНОЙ вариабельности (intra + inter).
+        # Предполагаем σ²_total ≈ 3 × σ²_intra — стандартная оценка для большинства препаратов
+        # (CV_inter обычно в 1.5–2 раза больше CV_intra → CV_total ≈ 2–3 × CV_intra).
+        sigma_total_sq = sigma_squared * 3
+        # δ = |ln(θ₁)| = ln(1/0.80) = ln(1.25) = 0.2231 — граница БЭ (одна сторона)
+        # ВАЖНО: используем одну сторону, а не весь диапазон (не θ2 - θ1)!
+        delta = -math.log(theta1)  # = ln(1.25) = 0.2231
+        # N_per_arm = (Z_α/2 + Z_β)² × 2 × σ²_total / δ²
+        n_per_arm = ((z_alpha + z_beta)**2) * 2 * sigma_total_sq / (delta**2)
+        n_base = n_per_arm * 2  # обе группы
+        formula = "N_per_arm = (Z_α/2 + Z_β)² × 2σ²_total / δ²  [σ²_total = 3×σ²_intra, δ = |ln(θ₁)|]"
         sequences = 2
 
     else:
@@ -140,6 +146,14 @@ def calculate_sample_size(
         n_with_dropout = math.ceil(n_with_dropout / 2) * 2
     else:
         n_with_dropout = math.ceil(n_with_dropout / sequences) * sequences
+
+    # ЕАЭС Решение №85: минимум 12 здоровых добровольцев в любом дизайне
+    MIN_SUBJECTS_EAEU = 12
+    min_applied = n_with_dropout < MIN_SUBJECTS_EAEU
+    if min_applied:
+        n_with_dropout = MIN_SUBJECTS_EAEU
+        if n_total < MIN_SUBJECTS_EAEU:
+            n_total = MIN_SUBJECTS_EAEU
 
     # распределение по последовательностям
     n_per_sequence = n_total // sequences
@@ -177,6 +191,9 @@ def calculate_sample_size(
 
         Рекомендация: Набрать {n_with_dropout} участников для обеспечения {int(power*100)}% мощности исследования
         при уровне значимости {int((1-alpha)*100)}% и ожидаемом выбывании {int(dropout_rate*100)}%."""
+
+    if min_applied:
+        reasoning += f"\n\n        ⚠️ ЕАЭС минимум: N < {MIN_SUBJECTS_EAEU} → увеличено до {MIN_SUBJECTS_EAEU} согласно Решению №85 (не менее 12 здоровых добровольцев)."
 
     return {
         "n_per_sequence": n_per_sequence,
@@ -242,6 +259,60 @@ def calculate_sample_size(
 #             "reasoning": f"CVintra = {cv_intra}% > 50% указывает на высоковариабельный препарат. Требуется дизайн 4-way Replicate с применением RSABE (Reference-Scaled Average Bioequivalence).",
 #             "typical_n": 48
 #         }
+
+
+def calculate_washout_period(t_half: float) -> Dict:
+    """
+    Рассчитывает минимальный период вымывания (washout) для перекрёстного дизайна.
+
+    По требованиям ЕАЭС (Решение №85): washout = 5–6 периодов полувыведения.
+
+    Args:
+        t_half: Период полувыведения в часах
+
+    Returns:
+        Dict с рекомендуемым периодом вымывания:
+        {
+            "t_half_h": float,
+            "washout_min_h": float,      # 5 × T½
+            "washout_rec_h": float,      # 5.5 × T½ (рекомендуемый)
+            "washout_max_h": float,      # 6 × T½
+            "washout_min_days": float,
+            "washout_rec_days": float,
+            "washout_max_days": float,
+            "is_parallel_required": bool,  # True если T½ > 24ч
+            "reasoning": str
+        }
+    """
+    washout_min_h = round(t_half * 5, 1)
+    washout_rec_h = round(t_half * 5.5, 1)
+    washout_max_h = round(t_half * 6, 1)
+
+    is_parallel = t_half > 24
+
+    reasoning = (
+        f"Период вымывания рассчитан как 5–6 × T½ (T½ = {t_half} ч).\n"
+        f"  Минимальный: {washout_min_h} ч ({round(washout_min_h/24, 1)} сут)\n"
+        f"  Рекомендуемый: {washout_rec_h} ч ({round(washout_rec_h/24, 1)} сут)\n"
+        f"  Максимальный: {washout_max_h} ч ({round(washout_max_h/24, 1)} сут)"
+    )
+    if is_parallel:
+        reasoning += (
+            f"\n  ⚠️ T½ = {t_half}ч > 24ч — перекрёстный дизайн нецелесообразен,"
+            f" рекомендуется параллельный дизайн (washout > {round(washout_min_h/24,0):.0f} сут)."
+        )
+
+    return {
+        "t_half_h": t_half,
+        "washout_min_h": washout_min_h,
+        "washout_rec_h": washout_rec_h,
+        "washout_max_h": washout_max_h,
+        "washout_min_days": round(washout_min_h / 24, 1),
+        "washout_rec_days": round(washout_rec_h / 24, 1),
+        "washout_max_days": round(washout_max_h / 24, 1),
+        "is_parallel_required": is_parallel,
+        "reasoning": reasoning,
+    }
 
 
 # Пример использования

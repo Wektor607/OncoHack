@@ -138,6 +138,80 @@ class LMStudioProvider(LLMProvider):
         return result["choices"][0]["message"]["content"]
 
 
+class GroqProvider(LLMProvider):
+    """
+    Провайдер для Groq API — бесплатный, очень быстрый, OpenAI-совместимый.
+
+    Бесплатный тариф: https://console.groq.com
+      - llama-3.3-70b-versatile: 14 400 req/day, 6 000 токенов/мин
+      - mixtral-8x7b-32768:      14 400 req/day
+
+    Пример:
+        provider = GroqProvider(api_key="gsk_...")
+    """
+
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = "https://api.groq.com/openai/v1/chat/completions"
+
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        data = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+        }
+
+        response = requests.post(self.base_url, headers=headers, json=data)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+
+
+class GeminiProvider(LLMProvider):
+    """
+    Провайдер для Google Gemini API — бесплатный, отличное качество русского.
+
+    Бесплатный тариф: https://ai.google.dev
+      - gemini-1.5-flash:  1 500 req/day, 15 req/мин
+      - gemini-2.0-flash:  1 500 req/day (новейшая, лучше качество)
+
+    Пример:
+        provider = GeminiProvider(api_key="AIza...")
+    """
+
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        url = f"{self.base_url}/{self.model}:generateContent?key={self.api_key}"
+        headers = {"Content-Type": "application/json"}
+
+        data: dict = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 4096},
+        }
+
+        if system_prompt:
+            data["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        return result["candidates"][0]["content"]["parts"][0]["text"]
+
+
 class MockProvider(LLMProvider):
     """Mock провайдер для тестирования без API."""
 

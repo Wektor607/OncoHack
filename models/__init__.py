@@ -13,14 +13,14 @@ from .design_recommender import (
     LMStudioProvider,
     MockProvider
 )
-from .llm_config import LLMConfig, create_llm_provider
+from .llm_config import get_llm_provider, get_translate_provider
 
 __all__ = [
     'DesignRecommender',
     'print_recommendation',
     'save_recommendation_to_json',
-    'create_llm_provider'
-    'LLMConfig'
+    'get_llm_provider',
+    'get_translate_provider',
     'LLMProvider',
     'ClaudeProvider',
     'OpenAIProvider',

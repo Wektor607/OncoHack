@@ -31,7 +31,14 @@ class PKRecord:
     volume_distribution: Optional[float] = None  # ДОБАВЛЕНО (Vd)
     vd_unit: Optional[str] = None
 
-    cv_intra: Optional[float] = None  # вариабельность
+    cv_intra: Optional[float] = None  # вариабельность (%) — max(AUC, Cmax) по ЕАЭС
+    cv_intra_source: Optional[str] = None  # "extracted" | "calculated_from_ci" | "database"
+    cv_intra_auc: Optional[float] = None   # CVintra по AUC (%)
+    cv_intra_cmax: Optional[float] = None  # CVintra по Cmax (%)
+
+    # 90% ДИ отношения геометрических средних (для расчёта CVintra)
+    ci_lower: Optional[float] = None   # нижняя граница 90% ДИ (как отношение, напр. 0.85)
+    ci_upper: Optional[float] = None   # верхняя граница 90% ДИ (как отношение, напр. 1.18)
 
     # Метаданные исследования
     title: Optional[str] = None  # Название статьи/исследования
@@ -43,3 +50,6 @@ class PKRecord:
     recommended_design: Optional[str] = None
     recommended_n: Optional[int] = None
     design_reasoning: Optional[str] = None
+
+    # Значения, отклонённые при извлечении (для диагностики)
+    rejected_params: Optional[list] = None
