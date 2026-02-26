@@ -736,6 +736,8 @@ class PubMed(PKSource):
             record.cv_intra_source = "extracted"
 
         # ШАГ 2: Общие паттерны CVintra (если раздельно не найдено)
+        # Минимальный порог 10%: истинный внутрисубъектный CV для BE редко бывает <10%.
+        # Значения <10% почти всегда аналитический CV, межсессионный CV или артефакт regex.
         if record.cv_intra is None:
             cv_patterns = [
                 r'(?:intra[- ]?subject(?:[\s\-]variability)?|CVintra|CV_intra|within[- ]?subject(?:[\s\-]variability)?|intraindividual variability)[^0-9]*(\d+\.?\d*)%?',
@@ -745,8 +747,12 @@ class PubMed(PKSource):
             for pattern in cv_patterns:
                 cv_match = re.search(pattern, text, re.IGNORECASE)
                 if cv_match:
-                    record.cv_intra = float(cv_match.group(1))
-                    record.cv_intra_source = "extracted"
+                    val = float(cv_match.group(1))
+                    if 10.0 <= val <= 100.0:
+                        record.cv_intra = val
+                        record.cv_intra_source = "extracted"
+                    else:
+                        record.rejected_params.append(f"CVintra={val}% (вне диапазона 10–100%)")
                     break
 
         # ШАГ 3: Расчёт из 90% ДИ если CVintra не найден (метод CVfromCI, аналог PowerTOST)
