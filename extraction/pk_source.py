@@ -1,6 +1,7 @@
 import json
 import math
 import re
+
 import requests
 import xml.etree.ElementTree as ET
 from typing import List, Optional, Tuple
@@ -8,15 +9,15 @@ from .pk_record import PKRecord
 
 
 # =============================================================================
-# МНН-РЕЗОЛВЕР: торговое/генерическое название → стандартный МНН (INN)
+# ИНН-РЕЗОЛВЕР: торговое/генерическое название → стандартный ИНН (INN)
 # Источники (в порядке приоритета):
 #   1. Локальный словарь (_INN_LOCAL) — быстро, без сети
 #   2. GRLS (Государственный реестр лекарственных средств РФ) — для дженериков
 #   3. RxNorm (NLM USA) — международная база
 # =============================================================================
 
-# Локальный словарь: ключ — любое написание, значение — МНН по ВОЗ
-# Примеры МНН (один МНН = один препарат): amlodipine, metformin, atorvastatin
+# Локальный словарь: ключ — любое написание, значение — ИНН по ВОЗ
+# Примеры ИНН (один ИНН = один препарат): amlodipine, metformin, atorvastatin
 _INN_LOCAL: dict[str, str] = {
     # Блокаторы кальциевых каналов
     "amlodipine": "amlodipine", "амлодипин": "amlodipine",
@@ -90,16 +91,42 @@ _INN_LOCAL: dict[str, str] = {
     "spironolactone": "spironolactone", "спиронолактон": "spironolactone",
     "acetylsalicylic acid": "acetylsalicylic acid",
     "aspirin": "acetylsalicylic acid",  "аспирин": "acetylsalicylic acid",
+    # Онкология
+    "axitinib":     "axitinib",     "акситиниб":    "axitinib",
+    "imatinib":     "imatinib",     "иматиниб":     "imatinib",
+    "erlotinib":    "erlotinib",    "эрлотиниб":    "erlotinib",
+    "gefitinib":    "gefitinib",    "гефитиниб":    "gefitinib",
+    "sorafenib":    "sorafenib",    "сорафениб":    "sorafenib",
+    "sunitinib":    "sunitinib",    "сунитиниб":    "sunitinib",
+    "lapatinib":    "lapatinib",    "лапатиниб":    "lapatinib",
+    "cabozantinib": "cabozantinib", "кабозантиниб": "cabozantinib",
+    "lenvatinib":   "lenvatinib",   "ленватиниб":   "lenvatinib",
+    "regorafenib":  "regorafenib",  "регорафениб":  "regorafenib",
+    "pazopanib":    "pazopanib",    "пазопаниб":    "pazopanib",
+    "vandetanib":   "vandetanib",   "вандетаниб":   "vandetanib",
+    "dasatinib":    "dasatinib",    "дазатиниб":    "dasatinib",
+    "nilotinib":    "nilotinib",    "нилотиниб":    "nilotinib",
+    "bosutinib":    "bosutinib",    "бозутиниб":    "bosutinib",
+    "ponatinib":    "ponatinib",    "понатиниб":    "ponatinib",
+    "ibrutinib":    "ibrutinib",    "ибрутиниб":    "ibrutinib",
+    "osimertinib":  "osimertinib",  "осимертиниб":  "osimertinib",
+    "alectinib":    "alectinib",    "алектиниб":    "alectinib",
+    "crizotinib":   "crizotinib",   "кризотиниб":   "crizotinib",
+    "palbociclib":  "palbociclib",  "палбоциклиб":  "palbociclib",
+    "ribociclib":   "ribociclib",   "рибоциклиб":   "ribociclib",
+    "abemaciclib":  "abemaciclib",  "абемациклиб":  "abemaciclib",
+    "everolimus":   "everolimus",   "эверолимус":   "everolimus",
+    "temsirolimus": "temsirolimus", "темсиролимус": "temsirolimus",
 }
 
 
 def _resolve_inn_grls(drug_name: str) -> Optional[str]:
     """
-    Поиск МНН через GRLS (Государственный реестр лекарственных средств РФ).
+    Поиск ИНН через GRLS (Государственный реестр лекарственных средств РФ).
     Используется для дженериков, когда введено торговое название (напр. «Амлодипин-Тева»).
 
     API GRLS: https://grls.rosminzdrav.ru/api/v1/
-    Возвращает МНН или None если не найдено.
+    Возвращает ИНН или None если не найдено.
     """
     try:
         url = "https://grls.rosminzdrav.ru/api/v1/medicines"
@@ -110,7 +137,7 @@ def _resolve_inn_grls(drug_name: str) -> Optional[str]:
 
         items = data.get("data") or data.get("items") or data.get("results") or []
         if items:
-            # Берём МНН из первого результата
+            # Берём ИНН из первого результата
             first = items[0]
             inn = (
                 first.get("inn")
@@ -127,8 +154,8 @@ def _resolve_inn_grls(drug_name: str) -> Optional[str]:
 
 def _resolve_inn_rxnorm(drug_name: str) -> Optional[str]:
     """
-    Поиск МНН через RxNorm (NLM USA) — международная база.
-    Возвращает МНН или None.
+    Поиск ИНН через RxNorm (NLM USA) — международная база.
+    Возвращает ИНН или None.
     """
     try:
         url = "https://rxnav.nlm.nih.gov/REST/rxcui.json"
@@ -155,7 +182,7 @@ def _resolve_inn_rxnorm(drug_name: str) -> Optional[str]:
 
 def normalize_inn(drug_name: str, use_external: bool = True) -> str:
     """
-    Нормализует введённое название к стандартному МНН.
+    Нормализует введённое название к стандартному ИНН.
 
     Порядок разрешения:
       1. Локальный словарь (мгновенно)
@@ -163,16 +190,16 @@ def normalize_inn(drug_name: str, use_external: bool = True) -> str:
       3. RxNorm — международная база
       4. Исходное название как есть (fallback)
 
-    Примеры МНН (один МНН = один уникальный препарат):
+    Примеры ИНН (один ИНН = один уникальный препарат):
       amlodipine, metformin, atorvastatin, losartan, tacrolimus,
       ibuprofen, azithromycin, omeprazole, warfarin, levothyroxine
 
     Args:
-        drug_name:    Введённое название (МНН, торговое, дженерик)
+        drug_name:    Введённое название (ИНН, торговое, дженерик)
         use_external: Разрешить запросы к внешним базам (GRLS, RxNorm)
 
     Returns:
-        Стандартизованный МНН (строка)
+        Стандартизованный ИНН (строка)
     """
     key = drug_name.lower().strip()
 
@@ -361,9 +388,11 @@ def determine_study_design(cv_intra: Optional[float] = None,
 
     Возвращает: (дизайн, рекомендуемое N, обоснование)
     """
-    # Если T½ очень большой (> 24 часов) -> параллельный дизайн
-    if t_half and t_half > 24:
-        return ("Parallel", 150, f"Пролонгированное действие (T½={t_half}h)")
+    # Параллельный дизайн только если период отмывки (5×T½) > 21 дней
+    if t_half:
+        washout_days = math.ceil(5 * t_half / 24)
+        if washout_days > 21:
+            return ("Параллельный", 150, f"Период отмывки {washout_days} сут > 21 сут (T½={t_half}h)")
 
     # Если CVintra неизвестен, пробуем найти типичное значение
     if cv_intra is None and drug_name:
@@ -455,12 +484,12 @@ class PubMed(PKSource):
                study_type: Optional[str] = None,
                max_results: int = 5) -> List[str]:
         """
-        Поиск статей в PubMed по МНН препарата.
-        Используется МНН (INN) для точного поиска — один МНН = один препарат.
+        Поиск статей в PubMed по ИНН препарата.
+        Используется ИНН (INN) для точного поиска — один ИНН = один препарат.
         Возвращает список PMID.
         """
-        # МНН-специфичный запрос: MeSH + Title/Abstract + Supplementary Concept
-        # MeSH-термы строго соответствуют МНН → один препарат, без торговых синонимов
+        # ИНН-специфичный запрос: MeSH + Title/Abstract + Supplementary Concept
+        # MeSH-термы строго соответствуют ИНН → один препарат, без торговых синонимов
         inn_term = (
             f'("{drug}"[MeSH Terms] OR "{drug}"[Title/Abstract] '
             f'OR "{drug}"[Supplementary Concept])'
@@ -798,7 +827,11 @@ class OpenFDA(PKSource):
         study_type: Optional[str] = None,
         max_results: int = 3
     ) -> List[str]:
-        """Поиск инструкций по МНН через OpenFDA. Возвращает список идентификаторов."""
+        """Поиск инструкций по ИНН через OpenFDA. Возвращает список идентификаторов."""
+        # OpenFDA индексирует только латинские generic names — кириллица даст 400 Bad Request
+        if not drug.isascii():
+            print(f"⚠️  OpenFDA: пропуск — имя «{drug}» содержит не-ASCII символы (FDA принимает только латиницу)")
+            return []
         search_query = f'openfda.generic_name:"{drug.lower()}"'
         params = {"search": search_query, "limit": max_results}
 
@@ -925,7 +958,7 @@ def merge_pk_records(records: List[PKRecord], drug: str) -> PKRecord:
 
     Args:
         records: список PKRecord из разных статей
-        drug:    МНН действующего вещества
+        drug:    ИНН действующего вещества
 
     Returns:
         Один PKRecord с заполненными полями из лучших источников.

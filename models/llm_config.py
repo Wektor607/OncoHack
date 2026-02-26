@@ -10,6 +10,7 @@ from .design_recommender import (
     GeminiProvider,
     OllamaProvider,
     LMStudioProvider,
+    YandexGPTProvider,
     MockProvider
 )
 
@@ -53,6 +54,12 @@ def get_llm_provider():
             api_key=os.getenv("CLAUDE_API_KEY"),
             model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
         )
+    elif provider == "yandex":
+        return YandexGPTProvider(
+            api_key=os.getenv("YANDEX_API_KEY"),
+            folder_id=os.getenv("YANDEX_FOLDER_ID"),
+            model=os.getenv("YANDEX_MODEL", "yandexgpt/latest"),
+        )
     elif provider == "mock":
         return MockProvider()
     else:
@@ -94,6 +101,12 @@ def get_translate_provider():
         return OllamaProvider(
             model=os.getenv("OLLAMA_MODEL", "qwen2.5:14b"),
             base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
+        )
+    elif provider == "yandex":
+        return YandexGPTProvider(
+            api_key=os.getenv("YANDEX_API_KEY"),
+            folder_id=os.getenv("YANDEX_FOLDER_ID"),
+            model=os.getenv("YANDEX_MODEL", "yandexgpt/latest"),
         )
     else:
         raise ValueError(f"Неизвестный TRANSLATE_PROVIDER: {provider}")

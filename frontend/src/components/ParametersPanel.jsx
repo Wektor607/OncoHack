@@ -37,7 +37,7 @@ export default function ParametersPanel({ onSubmit, isRunning }) {
     dose_unit: 'mg',
     fed_state: 'натощак',
     max_pubmed: 10,
-    max_fda: 3,
+    max_fda: 10,
     // advanced
     isv: 'auto',
     isv_cv: '',
@@ -89,7 +89,7 @@ export default function ParametersPanel({ onSubmit, isRunning }) {
         {/* Drug INN */}
         <div className="form-group">
           <label className="form-label">
-            МНН препарата <span className="required">*</span>
+            ИНН препарата <span className="required">*</span>
           </label>
           <input
             className="form-input"
@@ -113,7 +113,7 @@ export default function ParametersPanel({ onSubmit, isRunning }) {
 
         {/* Strength */}
         <div className="form-group">
-          <label className="form-label">Дозировка (strength)</label>
+          <label className="form-label">Дозировка</label>
           <div className="form-row">
             <input
               className="form-input"
@@ -159,7 +159,6 @@ export default function ParametersPanel({ onSubmit, isRunning }) {
                 className="form-input"
                 type="number"
                 min="1"
-                max="50"
                 value={form.max_pubmed}
                 onChange={set('max_pubmed')}
               />
@@ -170,7 +169,6 @@ export default function ParametersPanel({ onSubmit, isRunning }) {
                 className="form-input"
                 type="number"
                 min="0"
-                max="10"
                 value={form.max_fda}
                 onChange={set('max_fda')}
               />

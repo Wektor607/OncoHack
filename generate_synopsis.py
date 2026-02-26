@@ -13,6 +13,7 @@
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from docx import Document
@@ -159,6 +160,325 @@ def _render(template_key: str, **kwargs) -> str:
     """Форматирует шаблонный текст блока синопсиса, подставляя параметры."""
     return SECTION_TEMPLATES[template_key].format(**kwargs)
 
+
+# ─── Расчёт хронологии исследования ──────────────────────────────────────────
+
+def _days_word(n: int) -> str:
+    """Возвращает правильную форму слова 'день' для числа n."""
+    last2, last1 = n % 100, n % 10
+    if 11 <= last2 <= 14:
+        return "дней"
+    if last1 == 1:
+        return "день"
+    if 2 <= last1 <= 4:
+        return "дня"
+    return "дней"
+
+
+def _compute_study_timeline(data: dict) -> dict:
+    """
+    Вычисляет хронологические параметры исследования на основе данных из JSON.
+
+    Args:
+        data: словарь из JSON-файла рекомендации (содержит design, t_half_used, pk_data, n_subjects)
+
+    Returns:
+        Словарь с вычисленными параметрами хронологии.
+    """
+    design    = data.get("design", "2×2 Cross-over")
+    t_half    = data.get("t_half_used") or 24.0
+
+    # Tmax из первой записи pk_data (обычно merged)
+    tmax = None
+    for r in data.get("pk_data", []):
+        if r.get("tmax"):
+            tmax = r["tmax"]
+            break
+    tmax = tmax or 2.0
+
+    # ── Длительность забора ПК-образцов ──────────────────────────────────────
+    # Минимум 24 ч, максимум 72 ч (практическое ограничение), не менее 3×T½
+    pk_sampling_h    = int(min(72, max(24, math.ceil(5 * t_half))))
+    pk_sampling_days = math.ceil(pk_sampling_h / 24)
+
+    # ── Длительность периода (дней в центре) ─────────────────────────────────
+    # День 0 = госпитализация, День 1 = приём, День pk_sampling_days = выписка
+    period_days = pk_sampling_days + 1
+
+    # ── Отмывочный период: ≥5×T½, минимум 7 дней ─────────────────────────────
+    washout_days = max(7, math.ceil(5 * t_half / 24))
+
+    # ── Период последующего наблюдения ────────────────────────────────────────
+    followup_day = 7
+
+    # ── Количество периодов ───────────────────────────────────────────────────
+    n_periods_map = {
+        "2×2 Cross-over":  2,
+        "3-way Replicate": 3,
+        "4-way Replicate": 4,
+        "Параллельный":    1,
+    }
+    n_periods  = n_periods_map.get(design, 2)
+    n_washouts = max(0, n_periods - 1)
+
+    n_subjects = data.get("n_subjects") or 12
+
+    # ── Суммарная длительность ───────────────────────────────────────────────
+    if n_periods == 1:  # параллельный
+        total_days = 14 + period_days + followup_day
+    else:
+        total_days = 14 + period_days * n_periods + washout_days * n_washouts + followup_day
+
+    # ── Дни приёма дозы (1, 1+washout, 1+2*washout, ...) ────────────────────
+    period_dosing_days   = [1 + i * washout_days for i in range(n_periods)]
+    period_admission_days = [d - 1 for d in period_dosing_days]   # День 0, День p2-1, ...
+    # Выписка: dosing_day + pk_sampling_days - 1
+    #   Для pk_sampling_days=1: discharge = dosing_day (т.е. выписка в день приёма)
+    #   Для pk_sampling_days=3: discharge = dosing_day + 2
+    period_discharge_days = [d + pk_sampling_days - 1 for d in period_dosing_days]
+
+    last_dosing_day      = period_dosing_days[-1]
+    last_discharge_day   = period_discharge_days[-1]
+    followup_visit_day   = last_dosing_day + followup_day
+
+    # ── Стандартный ПК-план: число точек ─────────────────────────────────────
+    # Приблизительно: 8 базовых + 2 точки на каждые 8 ч забора
+    n_timepoints = min(20, max(10, 8 + pk_sampling_days * 2))
+
+    # ── Объёмы крови ─────────────────────────────────────────────────────────
+    blood_per_sample    = 5    # мл на ПК-образец
+    dead_vol_per_draw   = 0.5  # мл мёртвого объёма на забор
+    total_pk_samples    = n_timepoints * n_periods   # на одного добровольца
+    pk_blood_volume     = blood_per_sample * total_pk_samples
+    dead_vol_total      = round(dead_vol_per_draw * total_pk_samples, 1)
+    lab_blood           = 40   # мл на клинические, биохимические анализы (стандарт)
+    total_blood_volume  = pk_blood_volume + int(dead_vol_total) + lab_blood
+    total_samples_to_lab = total_pk_samples * n_subjects
+
+    return {
+        "design":               design,
+        "n_periods":            n_periods,
+        "screening_days":       14,
+        "period_days":          period_days,
+        "pk_sampling_h":        pk_sampling_h,
+        "pk_sampling_days":     pk_sampling_days,
+        "washout_days":         washout_days,
+        "followup_day":         followup_day,
+        "total_days":           total_days,
+        "n_subjects":           n_subjects,
+        "period_dosing_days":   period_dosing_days,
+        "period_admission_days":period_admission_days,
+        "period_discharge_days":period_discharge_days,
+        "last_dosing_day":      last_dosing_day,
+        "last_discharge_day":   last_discharge_day,
+        "followup_visit_day":   followup_visit_day,
+        "n_timepoints":         n_timepoints,
+        "total_pk_samples":     total_pk_samples,
+        "pk_blood_volume":      pk_blood_volume,
+        "dead_vol_total":       dead_vol_total,
+        "dead_vol_per_draw":    dead_vol_per_draw,
+        "lab_blood":            lab_blood,
+        "total_blood_volume":   total_blood_volume,
+        "total_samples_to_lab": total_samples_to_lab,
+        "t_half":               t_half,
+    }
+
+
+def _generate_methodology_text(tl: dict, drug: str, dosing: str, fed_state: str) -> str:
+    """Генерирует текст методологии исследования для строки 11."""
+    design   = tl["design"]
+    n_periods = tl["n_periods"]
+
+    pd  = tl["period_days"]
+    wo  = tl["washout_days"]
+    fup = tl["followup_day"]
+    psh = tl["pk_sampling_h"]
+    dos = tl["period_dosing_days"]
+    dis = tl["period_discharge_days"]
+    fv  = tl["followup_visit_day"]
+    t_h = tl["t_half"]
+    n_pks = tl["total_pk_samples"]
+
+    drug_cap = drug.capitalize()
+    dosing_adv = "однократного" if dosing == "однократный" else "многократного"
+
+    if design == "Параллельный":
+        group_descr = (
+            "Добровольцы будут рандомизированы в одну из двух групп в соотношении 1:1: "
+            "группа исследуемого препарата и группа референтного препарата."
+        )
+        period_descr = (
+            f"Исследование включает один период ФК исследования.\n"
+            f"Длительность периода скрининга составит не более 14 дней, "
+            f"длительность периода ФК исследования составит {pd} дней, "
+            f"периода последующего наблюдения – {fup} дней от приёма препарата.\n\n"
+            f"Каждый доброволец получит однократно исследуемый или референтный препарат в День 1 {fed_state}, "
+            f"запивая 200 мл ±10 мл бутилированной негазированной воды. "
+            f"Добровольцы останутся в центре в течение как минимум {psh} часов после дозирования "
+            f"(до Дня {dis[0]}) с целью отбора биообразцов для фармакокинетического анализа.\n\n"
+            f"Период последующего наблюдения (День {fv}) проводится через {fup} дней после приёма препарата."
+        )
+    else:
+        # Перекрёстный или реплицированный дизайн
+        period_names_ru = {2: "двух", 3: "трёх", 4: "четырёх"}
+        n_str = period_names_ru.get(n_periods, str(n_periods))
+        group_descr = (
+            f"Добровольцы будут распределены в соответствии с рандомизационным списком "
+            f"в одну из групп в соотношении 1:1."
+        )
+        period_descr = (
+            f"Исследование будет состоять из периода скрининга, {n_str} периодов ФК исследования "
+            f"с отмывочными периодами между ними и периода последующего наблюдения.\n"
+            f"Длительность периода скрининга составит не более 14 дней, "
+            f"длительность каждого периода ФК исследования составит {pd} дней, "
+            f"длительность отмывочного периода – {wo} дней от приёма препарата в предшествующем периоде, "
+            f"периода последующего наблюдения – {fup} дней от приёма препарата в последнем периоде.\n\n"
+        )
+
+        # Описание периодов
+        dosing_days_str = " и ".join(f"День {d}" for d in dos)
+        period_descr += (
+            f"Добровольцы будут госпитализированы вечером накануне приёма препаратов. "
+            f"Утром в {dosing_days_str} добровольцы получат {dosing_adv} дозу "
+            f"исследуемого/референтного препарата {fed_state}, "
+            f"запивая 200 мл ±10 мл бутилированной негазированной воды комнатной температуры.\n\n"
+            f"Добровольцы останутся в центре в течение как минимум {psh} часов после дозирования "
+            f"с целью отбора биообразцов для анализа фармакокинетики и оценки параметров безопасности.\n\n"
+            f"В каждом из {n_periods} периодов ФК исследования будет проводиться отбор "
+            f"{tl['n_timepoints']} проб крови по 5 мл у каждого добровольца. "
+            f"Всего в ходе исследования будет отобрано {n_pks} проб крови на одного добровольца "
+            f"для оценки фармакокинетических параметров {drug}.\n\n"
+        )
+
+        # Отмывочный период
+        period_descr += (
+            f"Отмывочный период составит {wo} дней с момента приёма дозы. "
+            f"Длительность отмывочного периода превышает длительность 5-ти периодов полувыведения {drug_cap} "
+            f"(Т½ {drug_cap} из плазмы крови составляет около {t_h} ч).\n\n"
+        )
+
+        # Период наблюдения
+        period_descr += (
+            f"Визит периода последующего наблюдения будет проведён на {fup} день "
+            f"(День {fv}) от последнего приёма препарата с целью оценки НЯ/СНЯ."
+        )
+
+    return (
+        "Настоящее исследование будет выполнено с участием здоровых добровольцев, "
+        "соответствующих критериям включения/невключения и подписавших «Информационный листок "
+        "добровольца с формой информированного согласия».\n\n"
+        f"{group_descr}\n\n"
+        f"{period_descr}"
+    )
+
+
+def _generate_periods_text(tl: dict, drug: str, dosing: str, fed_state: str) -> str:
+    """Генерирует текст для строки 18 — «Периоды исследования»."""
+    design   = tl["design"]
+    n_periods = tl["n_periods"]
+    psd      = tl["pk_sampling_days"]
+    wo       = tl["washout_days"]
+    fup      = tl["followup_day"]
+    dos      = tl["period_dosing_days"]
+    adm      = tl["period_admission_days"]
+    dis      = tl["period_discharge_days"]
+    fv       = tl["followup_visit_day"]
+
+    lines = ["Исследование включает:", ""]
+    lines.append("Период скрининга (предварительное обследование добровольцев):")
+    lines.append("Визит 0. (День -14 – День -1).")
+    lines.append("")
+
+    if design == "Параллельный":
+        lines.append("Период ФК исследования:")
+        lines.append(f"Визит 1. День {adm[0]} – День {dis[0]} (госпитализация)")
+        lines.append(f"Госпитализация и рандомизация – День {adm[0]}")
+        lines.append(f"Прием препарата – День {dos[0]}")
+        if psd == 1:
+            lines.append(f"Отбор образцов крови – День {dos[0]}")
+        else:
+            lines.append(f"Отбор образцов крови – День {dos[0]} – День {dis[0]}")
+        lines.append(f"Завершение госпитализации – День {dis[0]}.")
+        lines.append("")
+        lines.append("Период последующего наблюдения:")
+        lines.append(f"Визит 2. День {fv} (окно визита +2 дня)")
+    else:
+        for i in range(n_periods):
+            v = i + 1
+            lines.append(f"Период {v} ФК исследования.")
+            lines.append(f"Визит {v}. День {adm[i]} – День {dis[i]} (госпитализация)")
+            if i == 0:
+                lines.append(f"Госпитализация и рандомизация – День {adm[i]}")
+            else:
+                lines.append(f"Госпитализация – День {adm[i]}")
+            lines.append(f"Прием препарата – День {dos[i]}")
+            if psd == 1:
+                lines.append(f"Отбор образцов крови для анализа фармакокинетики и оценка параметров безопасности – День {dos[i]}")
+            else:
+                lines.append(f"Отбор образцов крови для анализа фармакокинетики и оценка параметров безопасности – День {dos[i]} – День {dis[i]}")
+            lines.append(f"Завершение госпитализации – День {dis[i]}.")
+
+            if i < n_periods - 1:
+                wash_end = dos[i + 1]
+                lines.append(f"Отмывочный период: День {dos[i]} – День {wash_end} ({wo} дней от приема препарата в Периоде {v} ФК исследования).")
+            lines.append("")
+
+        lines.append("Период последующего наблюдения:")
+        lines.append(f"Визит {n_periods + 1}. День {fv} (окно визита +2 дня)")
+        lines.append(
+            "Доброволец посетит центр через 7 дней с момента последнего приема препарата, "
+            "будет осуществлен сбор данных о состоянии добровольца."
+        )
+
+    lines += [
+        "",
+        "Незапланированный визит",
+        "Проводится при необходимости. При наличии показаний может быть дополнительно выполнена "
+        "любая из процедур исследования по решению Исследователя.",
+        "",
+        "Визит досрочного завершения участия в исследовании",
+        "Проводится при досрочном выбывании добровольца из исследования.",
+    ]
+
+    return "\n".join(lines)
+
+
+def _generate_duration_text(tl: dict) -> str:
+    """Генерирует текст для строки 19 — «Продолжительность исследования»."""
+    design    = tl["design"]
+    n_periods = tl["n_periods"]
+    total     = tl["total_days"]
+    pd        = tl["period_days"]
+    wo        = tl["washout_days"]
+    fup       = tl["followup_day"]
+    last_dos  = tl["last_dosing_day"]
+    last_dis  = tl["last_discharge_day"]
+    fv        = tl["followup_visit_day"]
+
+    if design == "Параллельный":
+        return (
+            f"Максимальная продолжительность участия в исследовании для одного добровольца составит "
+            f"{total} {_days_word(total)}. Период скрининга продлится от 1 до 14 дней. "
+            f"Длительность периода ФК исследования составит {pd} {_days_word(pd)} "
+            f"(включая госпитализацию вечером накануне приёма препарата). "
+            f"Период наблюдения – {fup} {_days_word(fup)} (День {last_dos} – День {fv}) от приёма дозы."
+        )
+
+    # Перекрёстный / реплицированный
+    period_names = {2: "1 и 2", 3: "1, 2 и 3", 4: "1, 2, 3 и 4"}
+    pname = period_names.get(n_periods, "всех")
+    total_fk_days = last_dis + 1  # от Дня 0 до Дня last_dis включительно
+
+    return (
+        f"Максимальная продолжительность участия в исследовании для одного добровольца составит "
+        f"{total} {_days_word(total)}. Период скрининга продлится от 1 до 14 дней (День от -14 до -1). "
+        f"Длительность Периодов {pname} ФК – {total_fk_days} {_days_word(total_fk_days)} "
+        f"(от Дня 0 до Дня {last_dis} включительно), "
+        f"включая {wo} {_days_word(wo)} отмывочного периода между каждыми двумя последовательными периодами. "
+        f"Период наблюдения – {fup} {_days_word(fup)} (День {last_dos} – День {fv} включительно) "
+        f"от приёма последней дозы исследуемого препарата."
+    )
+
 # ─── Маппинг: строка → список значений для замены ────────────────────────────
 # Каждое значение заменяет СЛЕДУЮЩЕЕ вхождение PLACEHOLDER в ячейке (слева направо, сверху вниз).
 # Ключ — индекс строки таблицы (0-based).
@@ -169,6 +489,9 @@ def build_field_map(args, data: dict, design_synopsis: str = "") -> dict:
     """Возвращает маппинг строк таблицы → список значений для замены."""
     fed_state    = args.fed_state
     dosing       = args.dosing
+
+    # ── Хронология исследования ───────────────────────────────────────────────
+    tl = _compute_study_timeline(data)
     dosing1      = DOSING_DESCRIPTIONS.get(dosing, ["однократного", "однократным"])[0]
     dosing2      = DOSING_DESCRIPTIONS.get(dosing, ["однократного", "однократным"])[1]
 
@@ -207,7 +530,7 @@ def build_field_map(args, data: dict, design_synopsis: str = "") -> dict:
     dose_str     = _fmt_dose()
 
     # Название препарата для строки 6 (без торгового наименования)
-    drug6_parts = ["<Название тестового препарата>", f"МНН: {drug_cap}"]
+    drug6_parts = ["<Название тестового препарата>", f"ИНН: {drug_cap}"]
     if dosage_form:
         drug6_parts.append(dosage_form)
     if strength_str:
@@ -225,10 +548,10 @@ def build_field_map(args, data: dict, design_synopsis: str = "") -> dict:
     study_title = (
         f"Открытое рандомизированное {design_adj} исследование сравнительной "
         f"фармакокинетики (биоэквивалентности) препаратов "
-        f"<Название тестового препарата> (МНН: {drug_cap}"
+        f"<Название тестового препарата> (ИНН: {drug_cap}"
         + (f", {dosage_form}" if dosage_form else "")
         + (f", {strength_str}" if strength_str else "")
-        + f") и <Название референтного препарата> (МНН: {drug_cap}"
+        + f") и <Название референтного препарата> (ИНН: {drug_cap}"
         + (f", {dosage_form}" if dosage_form else "")
         + (f", {strength_str}" if strength_str else "")
         + f") {fed_state_title} у здоровых добровольцев."
@@ -264,8 +587,8 @@ def build_field_map(args, data: dict, design_synopsis: str = "") -> dict:
         # ── Строка 10: Дизайн исследования — LLM-генерированный текст ────────
         10: ["__REPLACE__", design_synopsis],
 
-        # ── Строка 11: Методология — оставляем для ручного заполнения ────────
-        # 11: [...]
+        # ── Строка 11: Методология ───────────────────────────────────────────
+        11: ["__REPLACE__", _generate_methodology_text(tl, drug, dosing, fed_state)],
 
         # ── Строка 12: Количество добровольцев ───────────────────────────────
         12: ["__REPLACE__", _render(
@@ -301,7 +624,7 @@ def build_field_map(args, data: dict, design_synopsis: str = "") -> dict:
         # ── Строка 17: Референтный препарат (R) ──────────────────────────────
         17: [
             "<Название референтного препарата>",  # торговое название R
-            drug,                                  # МНН
+            drug,                                  # ИНН
             dosage_form,                           # лекарственная форма
             strength_str,                          # дозировка
             dosage_form,                           # «Состав на 1 ___»
@@ -312,11 +635,11 @@ def build_field_map(args, data: dict, design_synopsis: str = "") -> dict:
             None, None, None, None, None, None, None,
         ],
 
-        # ── Строка 18: Периоды исследования — ручное заполнение ──────────────
-        # 18: [None, None, ...]
+        # ── Строка 18: Периоды исследования ──────────────────────────────────
+        18: ["__REPLACE__", _generate_periods_text(tl, drug, dosing, fed_state)],
 
-        # ── Строка 19: Продолжительность — ручное заполнение ─────────────────
-        19: [None, None, None, None, None],
+        # ── Строка 19: Продолжительность исследования ─────────────────────────
+        19: ["__REPLACE__", _generate_duration_text(tl)],
 
         # ── Строка 20: ФК параметры ───────────────────────────────────────────
         20: ["__REPLACE__", _render("pk_parameters", drug=drug)],

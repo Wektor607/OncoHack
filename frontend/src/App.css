@@ -84,6 +84,49 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+  position: relative;
+  transition: width .2s ease, flex .2s ease;
+}
+
+.right-panel--collapsed {
+  flex: none;
+  width: 36px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+/* ── Collapse toggle button ───────────────────────────────────────────────────── */
+.panel-collapse-btn {
+  position: absolute;
+  top: 12px;
+  left: 10px;
+  z-index: 10;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+
+.panel-collapse-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.right-panel--collapsed .panel-collapse-btn {
+  position: static;
 }
 
 /* ── Form styles ─────────────────────────────────────────────────────────────── */
@@ -399,6 +442,33 @@ body {
   font-size: 14px;
   max-width: 300px;
   line-height: 1.6;
+}
+
+/* ── Resize handle ───────────────────────────────────────────────────────────── */
+.resize-handle {
+  height: 6px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: ns-resize;
+  transition: background .15s;
+  position: relative;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 2px;
+  background: #94a3b8;
+  border-radius: 1px;
+  box-shadow: 0 -3px 0 #94a3b8, 0 3px 0 #94a3b8;
+}
+
+.resize-handle:hover {
+  background: #cbd5e1;
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────────── */

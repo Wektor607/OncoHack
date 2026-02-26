@@ -33,14 +33,14 @@ def analyze_drug(
         dosage_form: Форма выпуска (tablet, capsule, и т.д.)
         max_results: Максимальное количество статей для анализа
     """
-    # Нормализуем МНН: локальный словарь → GRLS → RxNorm
+    # Нормализуем ИНН: локальный словарь → GRLS → RxNorm
     inn = normalize_inn(drug)
     if inn.lower() != drug.lower():
-        print(f"\n💡 МНН нормализован: «{drug}» → «{inn}»")
+        print(f"\n💡 ИНН нормализован: «{drug}» → «{inn}»")
     drug = inn
 
     print("\n" + "="*80)
-    print(f"🔬 АНАЛИЗ ПРЕПАРАТА (МНН): {drug}")
+    print(f"🔬 АНАЛИЗ ПРЕПАРАТА (ИНН): {drug}")
     if dosage_form:
         print(f"💊 Форма выпуска: {dosage_form}")
     print("="*80 + "\n")
@@ -222,7 +222,7 @@ def main():
         description="Анализ препарата и рекомендация дизайна исследования биоэквивалентности",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Примеры МНН (один МНН = один уникальный препарат):
+Примеры ИНН (один ИНН = один уникальный препарат):
   Кардио:        amlodipine, valsartan, losartan, bisoprolol, atorvastatin
   Диабет:        metformin, glimepiride, sitagliptin
   НПВС:          ibuprofen, diclofenac, meloxicam
@@ -236,7 +236,7 @@ def main():
   python main.py --drug "metformin" --form "tablet" --max-results 20
   python main.py --drug "tacrolimus" --form "capsule"
 
-Также принимаются торговые/дженерические названия (будет выполнен поиск МНН через GRLS/RxNorm):
+Также принимаются торговые/дженерические названия (будет выполнен поиск ИНН через GRLS/RxNorm):
   python main.py --drug "Амлодипин-Тева"
 
 Настройка LLM:
@@ -249,7 +249,7 @@ def main():
         "--drug",
         type=str,
         required=True,
-        help="МНН препарата (INN) — один МНН соответствует одному препарату. "
+        help="ИНН препарата (INN) — один ИНН соответствует одному препарату. "
             "Примеры: amlodipine, metformin, atorvastatin, tacrolimus"
     )
 

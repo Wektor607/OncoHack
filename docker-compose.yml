@@ -11,37 +11,6 @@ services:
       - ./outputs:/app/outputs
       - ./synopsis_template.docx:/app/synopsis_template.docx:ro
     env_file: .env
-    depends_on:
-      ollama:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # ── Ollama: запускает сервер + скачивает модель ───────────────────────────────
-  ollama:
-    image: ollama/ollama
-    volumes:
-      - ollama_data:/root/.ollama
-      - ./ollama-entrypoint.sh:/entrypoint.sh:ro
-    ports:
-      - "11434:11434"
-    environment:
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral}
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
-    # healthcheck проходит только когда модель скачана и готова
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f /tmp/model_ready ]"]
-      interval: 10s
-      timeout: 5s
-      retries: 60        # до 10 минут на скачивание модели
-      start_period: 15s
-    # ── NVIDIA GPU (раскомментировать на Linux-сервере с GPU) ────────────────
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
     restart: unless-stopped
 
   # ── React frontend (nginx) ───────────────────────────────────────────────────
@@ -54,6 +23,3 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  ollama_data:   # постоянное хранилище моделей (не удаляется при restart)

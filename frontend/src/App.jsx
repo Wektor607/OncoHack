@@ -8,6 +8,7 @@ export default function App() {
   const [status, setStatus] = useState('idle') // idle | running | done | error
   const [messages, setMessages] = useState([])
   const [startTime, setStartTime] = useState(null)
+  const [resultCollapsed, setResultCollapsed] = useState(false)
 
   const handleSubmit = useCallback(async (params) => {
     // Reset state
@@ -45,8 +46,8 @@ export default function App() {
   return (
     <div className="app-wrapper">
       <header className="app-header">
-        <h1>BE Study Design Generator</h1>
-        <span className="subtitle">Генератор синопсиса протокола биоэквивалентности</span>
+        <h1>Генератор синопсиса биоэквивалентности</h1>
+        {/* <span className="subtitle">Генератор синопсиса протокола биоэквивалентности</span> */}
       </header>
 
       <div className="app-body">
@@ -56,6 +57,8 @@ export default function App() {
           messages={messages}
           jobId={jobId}
           startTime={startTime}
+          collapsed={resultCollapsed}
+          onToggleCollapse={() => setResultCollapsed(c => !c)}
         />
       </div>
     </div>

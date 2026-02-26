@@ -9,6 +9,7 @@
 """
 
 import json
+import math
 import os
 from typing import List, Dict, Optional
 from extraction.pk_record import PKRecord
@@ -123,14 +124,19 @@ class DesignRecommender:
             recommendation["t_half_used"] = t_half_from_data
             print(f"⚠️  T_HALF не распознан в ответе модели → используем {t_half_from_data}h из данных")
 
-        # SAFETY NET: Проверяем T½ > 24h → должен быть Параллельный дизайн
-        if recommendation.get("t_half_used") and recommendation["t_half_used"] > 24:
-            design_val = recommendation.get("design") or ""
-            if "параллельный" not in design_val.lower() and "parallel" not in design_val.lower():
-                print(f"⚠️  WARNING: T½ = {recommendation['t_half_used']}h > 24h, но модель выбрала {recommendation['design']}")
-                print(f"   Автоматически меняем на Параллельный дизайн")
-                recommendation["design"] = "Параллельный"
-                recommendation["reasoning"] += f"\n\n[Автокоррекция: T½ = {recommendation['t_half_used']}h > 24h требует параллельного дизайна по FDA guidance]"
+        # SAFETY NET: washout (5×T½) > 21 дня → Параллельный дизайн
+        if recommendation.get("t_half_used"):
+            _t = recommendation["t_half_used"]
+            _washout_days = math.ceil(5 * _t / 24)
+            if _washout_days > 21:
+                design_val = recommendation.get("design") or ""
+                if "параллельный" not in design_val.lower() and "parallel" not in design_val.lower():
+                    print(f"⚠️  WARNING: washout = {_washout_days} сут > 21, модель выбрала {recommendation['design']} → меняем на Параллельный")
+                    recommendation["design"] = "Параллельный"
+                    recommendation["reasoning"] += (
+                        f"\n\n[Автокоррекция: T½ = {_t}h → период отмывки 5×T½ = {_washout_days} сут > 21 сут "
+                        f"→ перекрёстный нецелесообразен, параллельный дизайн по FDA/EMA guidance]"
+                    )
 
         # Добавляем информацию о препарате
         recommendation["drug"] = drug
@@ -172,10 +178,16 @@ class DesignRecommender:
 
         return recommendation
 
-    def _translate_reasoning(self, text_en: str) -> str:
-        """Переводит обоснование с английского на русский язык."""
-        if not text_en:
-            return text_en
+    def _translate_reasoning(self, text: str) -> str:
+        """Переводит обоснование с английского на русский язык.
+        Если translate_llm совпадает с основным llm (TRANSLATE_PROVIDER=same),
+        перевод пропускается — текст уже на русском."""
+        if not text:
+            return text
+
+        # Если провайдер перевода тот же что и основной — текст уже на нужном языке
+        if self.translate_llm is self.llm:
+            return text
 
         translate_prompt = (
             "Translate the following bioequivalence study design reasoning from English to Russian.\n"
@@ -186,15 +198,15 @@ class DesignRecommender:
             "CVintra ANALYSIS → АНАЛИЗ CVintra, T½ ANALYSIS → АНАЛИЗ T½, "
             "DESIGN SELECTION → ВЫБОР ДИЗАЙНА, SAMPLE SIZE RATIONALE → ОБОСНОВАНИЕ РАЗМЕРА ВЫБОРКИ\n"
             "- Output only the translated text, no explanations\n\n"
-            f"{text_en}"
+            f"{text}"
         )
 
         try:
             translated = self.translate_llm.generate(translate_prompt, system_prompt="You are a professional medical translator. Translate accurately and fluently.")
             return translated.strip()
         except Exception as e:
-            print(f"⚠️  Перевод не удался ({e}), сохраняем английский текст")
-            return text_en
+            print(f"⚠️  Перевод не удался ({e}), сохраняем исходный текст")
+            return text
 
     def _pk_record_to_dict(self, record: PKRecord) -> Dict:
         """Преобразует PKRecord в словарь для JSON."""
@@ -216,113 +228,126 @@ class DesignRecommender:
 
     def _build_system_prompt(self) -> str:
         """Создаёт системный промпт с инструкциями."""
-        return """You are a senior clinical pharmacokineticist and regulatory affairs expert specializing in bioequivalence (BE) study design for regulatory submissions (EAEU, FDA, EMA).
+        return """Вы — старший клинический фармакокинетик и эксперт по регуляторным вопросам, специализирующийся на разработке дизайна исследований биоэквивалентности (БЭ) для регуляторных регистраций (ЕАЭС, FDA, EMA).
 
-        Your task: Analyze pharmacokinetic (PK) data and provide a scientifically rigorous justification for a BE study design recommendation.
+        Ваша задача: проанализировать фармакокинетические (ФК) данные и дать научно обоснованную рекомендацию по дизайну исследования БЭ.
 
-        ═══ REGULATORY FRAMEWORK ═══
+        ═══ НОРМАТИВНАЯ БАЗА ═══
 
-        EAEU Decision No. 85 (Eurasian Economic Commission Council, November 3, 2016):
-        - Standard BE acceptance criteria: 90% CI of geometric mean ratio (GMR) within 80.00–125.00% for AUC and Cmax
-        - Highly Variable Drug Products (HVDPs, CVintra ≥ 30%): Cmax criteria may be widened to 69.84–143.19% using replicated design + Reference-Scaled Average BE (RSABE)
-        - Washout period: must be ≥ 5×T½ (or ≥ 5×Tmax if T½ unknown)
-        - Minimum completed sample: 12 subjects
-        - Parallel design required when: T½ > 24h, carry-over risk is high, chronic disease population
+        Решение Совета ЕЭК № 85 от 3 ноября 2016 года:
+        - Стандартные критерии БЭ: 90% ДИ отношения геометрических средних (ОГС) в пределах 80,00–125,00% для AUC и Cmax
+        - Высоковариабельные лекарственные препараты (ВПЛП, CVintra ≥ 30%): критерии для Cmax могут быть расширены до 69,84–143,19% при использовании реплицированного дизайна + RSABE
+        - Период отмывки: должен составлять ≥ 5×T½ (или ≥ 5×Tmax, если T½ неизвестен)
+        - Минимальное число завершивших исследование: 12 участников
+        - Параллельный дизайн обязателен при: период отмывки (5×T½) > 21 дня, высоком риске переноса, хронических заболеваниях
 
-        FDA Guidance for Industry – Bioequivalence Studies with Pharmacokinetic Endpoints (2013, updated 2022):
-        - HVDP definition: intrasubject CV ≥ 30% based on replicated studies
-        - For drugs with T½ > 24h: parallel-group design preferred; crossover creates impractical washout (e.g., T½ = 30h → washout ≥ 150h = 6.25 days minimum, but more practically 2–3 weeks)
-        - RSABE for HVDP allows scaling acceptance limits using within-subject SD of reference
-        - Statistical approach: ANOVA on log-transformed data; 90% CI from mixed-effects model for replicated designs
+        Руководство FDA — Исследования БЭ с ФК конечными точками (2013, обновлено 2022):
+        - Определение ВПЛП: внутрисубъектный КВ ≥ 30% по реплицированным исследованиям
+        - Для препаратов с T½ > ~101 ч (период отмывки 5×T½ > 21 дня): предпочтителен параллельный дизайн; перекрёстный создаёт нецелесообразно длинный период отмывки
+        - При T½ от 24 до ~101 ч период отмывки составляет 5–21 день — перекрёстный дизайн остаётся выполнимым
+        - RSABE для ВПЛП позволяет масштабировать границы приемлемости
+        - Статистический подход: ANOVA в логарифмической шкале; 90% ДИ из модели смешанных эффектов
 
-        EMA Guideline on BE (CPMP/EWP/QWP/1401/98 Rev. 1, 2010):
-        - Same HVDP definition; replicated design enables reference-scaled criteria
-        - Parallel design: when repeated administration is impractical or unsafe
+        Руководство EMA по БЭ (CPMP/EWP/QWP/1401/98 Rev. 1, 2010):
+        - То же определение ВПЛП; реплицированный дизайн позволяет применять масштабированные критерии
+        - Параллельный дизайн: когда многократное введение нецелесообразно или небезопасно
 
-        ═══ DESIGN SELECTION CRITERIA ═══
+        ═══ КРИТЕРИИ ВЫБОРА ДИЗАЙНА ═══
 
-        1. 2x2 Cross-over (standard):
-           - Condition: CVintra < 30% AND T½ < 24h
-           - Structure: 2 periods, 2 sequences (AB/BA); each subject is own control
-           - Washout: ≥ 5×T½, minimum 1 week
-           - Advantage: smallest N, eliminates between-subject variability from error term
-           - Limitation: at CVintra ≥ 30%, standard 80–125% criteria require large N
+        1. 2×2 Перекрёстный (стандартный):
+           - Условие: CVintra < 30% И T½ < 24 ч
+           - Структура: 2 периода, 2 последовательности (AB/BA); каждый субъект — собственный контроль
+           - Период отмывки: ≥ 5×T½, минимум 1 неделя
+           - Преимущество: наименьший N, устраняет межсубъектную вариабельность из члена ошибки
 
-        2. 3-way Replicated (moderately variable):
-           - Condition: CVintra 30–50% AND T½ < 24h
-           - Structure: 3 periods (T, R, R or T, T, R); reference repeated to estimate CVintraR
-           - Enables RSABE/widened Cmax criteria; reduces N vs. parallel for same power
-           - Practical: 3 inpatient stays, total duration ~3×(dosing day + washout)
+        2. 3-периодный реплицированный (умеренно вариабельный):
+           - Условие: CVintra 30–50% И T½ < 24 ч
+           - Структура: 3 периода (T, R, R или T, T, R); повторение референса для оценки CVintraR
+           - Позволяет применять RSABE/расширенные критерии Cmax; снижает N по сравнению с параллельным
 
-        3. 4-way Replicated (highly variable):
-           - Condition: CVintra > 50% AND T½ < 24h
-           - Structure: 4 periods (T, T, R, R); full replication of both products
-           - Maximum statistical power for RSABE; needed when CVintra is very high
-           - Practical burden: 4 inpatient visits, long total study duration
+        3. 4-периодный реплицированный (высоковариабельный):
+           - Условие: CVintra > 50% И T½ < 24 ч
+           - Структура: 4 периода (T, T, R, R); полная репликация обоих препаратов
+           - Максимальная статистическая мощность для RSABE
 
-        4. Parallel (long T½ or special populations):
-           - MANDATORY when: T½ > 24h (crossover becomes impractical)
-           - Also indicated: chronic/serious disease, safety/tolerability concerns, stable-state studies
-           - Each subject receives only ONE product (no carry-over possible)
-           - Statistical penalty: all between-subject variability enters error term
-             → sigma_total² ≈ 3×sigma_intra² (typical inter/intra ratio), hence much larger N
-           - Required N typically 5–10× larger than crossover for same CVintra
+        4. Параллельный (очень длинный T½ или особые популяции):
+           - ОБЯЗАТЕЛЕН при: период отмывки 5×T½ > 21 дня, т.е. T½ > ~101 ч (≈ 4,2 суток)
+           - При T½ от 24 до ~101 ч washout составляет 5–21 день — ПЕРЕКРЁСТНЫЙ ОСТАЁТСЯ ДОПУСТИМЫМ
+           - Примеры: эверолимус T½≈30h → washout 6,25 сут → кроссовер ОК; амлодипин T½≈35h → washout 7,3 сут → кроссовер ОК
+           - Также показан: хронические/тяжёлые заболевания, исследования в стационарном состоянии
+           - Каждый субъект получает только ОДИН препарат; перенос невозможен
+           - Статистические потери: вся межсубъектная вариабельность входит в член ошибки
+             → sigma_total² ≈ 3×sigma_intra², поэтому N значительно больше
+           - Требуемый N обычно в 5–10 раз больше, чем при перекрёстном
 
-        CRITICAL RULE: T½ > 24 hours → MUST choose Parallel design, NO EXCEPTIONS!
+        КРИТИЧЕСКОЕ ПРАВИЛО: период отмывки (⌈5×T½/24⌉ дней) > 21 дня → ОБЯЗАТЕЛЬНО выбирать Параллельный дизайн. При washout ≤ 21 дня перекрёстный дизайн допустим.
 
-        **CRITICAL: You MUST respond in this EXACT format (no deviations):**
+        **ВАЖНО: Отвечайте строго в следующем формате (без отступлений):**
 
-        DESIGN: [design name]
-        N_SUBJECTS: [number]
-        CV_INTRA: [CV% value used, number only]
-        T_HALF: [T½ hours used, number only or N/A]
+        DESIGN: [название дизайна]
+        N_SUBJECTS: [число]
+        CV_INTRA: [использованное значение КВ%, только число]
+        T_HALF: [использованное значение T½ в часах, только число или N/A]
 
         REASONING:
-        1. DATA SOURCES & QUALITY: [Which sources, reliability, concordance between sources, any concerns about extracted values]
-        2. CVintra ANALYSIS: [Value, origin (extracted vs. assumed), variability category, regulatory implications for acceptance criteria]
-        3. T½ ANALYSIS: [Value, calculated minimum washout (5×T½), whether crossover is practically feasible, carry-over risk]
-        4. DESIGN SELECTION: [Why this design was chosen over alternatives; cite specific EAEU Decision 85 / FDA guidance criteria that apply]
-        5. SAMPLE SIZE RATIONALE: [Why this N is appropriate; mention what would happen with alternative designs]
+        1. ИСТОЧНИКИ И КАЧЕСТВО ДАННЫХ: [Какие источники, надёжность, согласованность между источниками, опасения относительно извлечённых значений]
+        2. АНАЛИЗ CVintra: [Значение, происхождение (извлечённое или допущение), категория вариабельности, регуляторные последствия для критериев приемлемости]
+        3. АНАЛИЗ T½: [Значение, рассчитанный минимальный период отмывки (5×T½), целесообразность перекрёстного дизайна, риск переноса]
+        4. ВЫБОР ДИЗАЙНА: [Почему выбран этот дизайн, а не альтернативы; сослаться на конкретные критерии Решения ЕЭК № 85 / руководств FDA]
+        5. ОБОСНОВАНИЕ РАЗМЕРА ВЫБОРКИ: [Почему такой N уместен; что произошло бы при альтернативных дизайнах]
 
-        **EXAMPLES:**
+        **ПРИМЕРЫ:**
 
-        Example 1 (Low variability, short T½ – standard crossover):
+        Пример 1 (низкая вариабельность, короткий T½ — стандартный перекрёстный):
         DESIGN: 2×2 Cross-over
         N_SUBJECTS: 24
         CV_INTRA: 18.5
         T_HALF: 8.0
 
         REASONING:
-        1. DATA SOURCES & QUALITY: CVintra was extracted from two independent PubMed BE studies reporting intrasubject variability of 17% and 20% respectively, showing good concordance. T½ = 8 hours confirmed by FDA label (authoritative source). No significant discrepancies between sources.
-        2. CVintra ANALYSIS: CVintra = 18.5% (average of two consistent estimates). This falls in the low variability category (<30%), meaning standard 80.00–125.00% acceptance criteria apply per EAEU Decision 85. No widened criteria or replicated design are needed.
-        3. T½ ANALYSIS: T½ = 8 hours. Minimum washout period = 5×8 = 40 hours (~1.7 days). In practice, a 7-day washout is typical, which is entirely feasible. No carry-over risk. Crossover design is fully appropriate.
-        4. DESIGN SELECTION: Standard 2×2 crossover is the most efficient and well-established design for this PK profile. Per EAEU Decision 85 and FDA BE guidance, a 2-period, 2-sequence crossover is appropriate when CVintra < 30% and T½ < 24h. Each subject serves as their own control, eliminating between-subject variability from the error term and minimizing required N.
-        5. SAMPLE SIZE RATIONALE: N = 24 is sufficient for CVintra = 18.5%, α = 0.05 (two-sided), 80% power, 80–125% limits. Parallel design would require ~5× more subjects (N ≈ 120) for the same power — clearly impractical when crossover is feasible.
+        1. ИСТОЧНИКИ И КАЧЕСТВО ДАННЫХ: CVintra извлечён из двух независимых исследований БЭ в PubMed с внутрисубъектной вариабельностью 17% и 20% соответственно — хорошая согласованность. T½ = 8 ч подтверждён инструкцией FDA (авторитетный источник). Значимых расхождений между источниками нет.
+        2. АНАЛИЗ CVintra: CVintra = 18,5% (среднее двух согласованных оценок). Категория — низкая вариабельность (<30%): применяются стандартные критерии 80,00–125,00% согласно Решению ЕЭК № 85. Расширенные критерии и реплицированный дизайн не нужны.
+        3. АНАЛИЗ T½: T½ = 8 ч. Минимальный период отмывки = 5×8 = 40 ч (~1,7 сут). На практике принят период 7 дней — полностью выполнимо. Риск переноса отсутствует. Перекрёстный дизайн полностью уместен.
+        4. ВЫБОР ДИЗАЙНА: Стандартный перекрёстный 2×2 — наиболее эффективный и хорошо изученный дизайн для данного ФК-профиля. Согласно Решению ЕЭК № 85 и руководству FDA по БЭ, перекрёстный дизайн с 2 периодами и 2 последовательностями уместен при CVintra < 30% и T½ < 24 ч. Каждый субъект служит собственным контролем, что устраняет межсубъектную вариабельность из члена ошибки и минимизирует N.
+        5. ОБОСНОВАНИЕ РАЗМЕРА ВЫБОРКИ: N = 24 достаточен для CVintra = 18,5%, α = 0,05 (двусторонний), мощность 80%, границы 80–125%. Параллельный дизайн потребовал бы ~5× больше участников (N ≈ 120) для той же мощности — явно нецелесообразно при доступности перекрёстного.
 
-        Example 2 (Moderate CVintra, long T½ – mandatory parallel):
-        DESIGN: Параллельный
-        N_SUBJECTS: 150
+        Пример 2 (умеренный CVintra, длинный T½ но период отмывки ≤ 21 сут — кроссовер допустим):
+        DESIGN: 2×2 Cross-over
+        N_SUBJECTS: 28
         CV_INTRA: 22.0
         T_HALF: 48.0
 
         REASONING:
-        1. DATA SOURCES & QUALITY: T½ = 48 hours extracted from FDA label — the most authoritative source for absolute PK parameters. CVintra = 22% from one PubMed BE study; value is consistent with known pharmacology of this drug class. Data quality is acceptable, though a single CVintra source slightly limits confidence.
-        2. CVintra ANALYSIS: CVintra = 22% places this drug in the low variability category (<30%). Under normal circumstances, this would support a 2×2 crossover design with standard 80–125% criteria. However, CVintra is not the determining factor here — T½ is.
-        3. T½ ANALYSIS: T½ = 48 hours. Minimum washout = 5×48 = 240 hours = 10 days. In practice, regulatory guidelines require complete elimination before next dosing; with 48h T½, a realistic washout of 14–21 days would be needed. A 2-period crossover would span ≥ 6 weeks of inpatient monitoring, creating unacceptable dropout risk, ethical concerns, and logistical burden. Per FDA guidance and EAEU Decision 85, T½ > 24h renders crossover impractical.
-        4. DESIGN SELECTION: Parallel-group design is mandatory (EAEU Decision 85; FDA Guidance for Industry – BE Studies with PK Endpoints, 2013). Crossover is contraindicated due to the excessively long required washout. Each subject receives only one product; no carry-over is possible. The statistical penalty is that all between-subject variability enters the error term (sigma_total² ≈ 3×sigma_intra²), requiring a much larger N.
-        5. SAMPLE SIZE RATIONALE: N = 150 accounts for sigma_total² = 3×sigma_intra², delta = |ln(0.80)| = 0.2231, z_α/2 = 1.96, z_β = 0.842, and 20% dropout. A crossover at CVintra = 22% would need only N = 18 — but that option is ruled out by T½ > 24h. The large N is the unavoidable cost of the parallel design for a long-half-life drug.
+        1. ИСТОЧНИКИ И КАЧЕСТВО ДАННЫХ: T½ = 48 ч извлечён из инструкции FDA — наиболее авторитетный источник для абсолютных ФК-параметров. CVintra = 22% из одного исследования БЭ в PubMed; значение согласуется с фармакологией этого класса. Качество данных приемлемо.
+        2. АНАЛИЗ CVintra: CVintra = 22% — категория низкой вариабельности (<30%). Стандартные критерии БЭ 80–125% применимы; реплицированный дизайн и RSABE не нужны.
+        3. АНАЛИЗ T½: T½ = 48 ч. Минимальный период отмывки = 5×48 = 240 ч = 10 сут. 10 сут ≤ 21 сут → перекрёстный дизайн ВЫПОЛНИМ. Общая длительность 2-периодного исследования (с 10-суточной отмывкой) составит ~3–4 недели — логистически и этически приемлемо. Переход к параллельному дизайну обоснован только при washout > 21 сут (T½ > ~101 ч).
+        4. ВЫБОР ДИЗАЙНА: Стандартный 2×2 кроссовер — оптимальный выбор. CVintra = 22% (<30%) исключает необходимость реплицированного дизайна; washout = 10 сут (<21 сут) — перекрёстный практически выполним. Каждый субъект является собственным контролем, что устраняет межсубъектную вариабельность из ошибки и минимизирует N по сравнению с параллельным.
+        5. ОБОСНОВАНИЕ РАЗМЕРА ВЫБОРКИ: N = 28 достаточен для CVintra = 22%, α = 0,05, мощность 80%, границы 80–125% с учётом 20% выбывания. Параллельный дизайн потребовал бы N ≈ 130–150 (sigma_total² ≈ 3×sigma_intra²) — неоправданно при допустимом кроссовере.
 
-        **CRITICAL RULES (MUST FOLLOW):**
-        1. **T½ > 24 hours → ALWAYS use "Параллельный" design, NO EXCEPTIONS!**
-        2. If CVintra not in data → use typical 20-25% and explicitly state this assumption in reasoning
-        3. If T½ in data → check rule #1 FIRST before choosing design
-        4. Use ONLY numbers for CV_INTRA and T_HALF (no units)
-        5. Write REASONING in English. All 5 sections are mandatory. Be analytical, not just descriptive.
+        Пример 3 (очень длинный T½, washout > 21 сут — обязательный параллельный):
+        DESIGN: Параллельный
+        N_SUBJECTS: 150
+        CV_INTRA: 22.0
+        T_HALF: 120.0
 
-        **FORMAT REQUIREMENTS:**
-        - DESIGN must be one of: "2×2 Cross-over", "3-way Replicate", "4-way Replicate", "Параллельный"
-        - Field names (DESIGN:, N_SUBJECTS:, etc.) must be in English exactly as shown
-        - REASONING sections must be numbered 1–5 exactly as shown"""
+        REASONING:
+        1. ИСТОЧНИКИ И КАЧЕСТВО ДАННЫХ: T½ = 120 ч (5 суток) извлечён из инструкции FDA. CVintra = 22% из PubMed. Качество данных приемлемо.
+        2. АНАЛИЗ CVintra: CVintra = 22% — низкая вариабельность (<30%). В обычных условиях это поддержало бы кроссовер. Однако определяющим фактором здесь является T½.
+        3. АНАЛИЗ T½: T½ = 120 ч. Минимальный период отмывки = 5×120 = 600 ч = 25 сут. 25 сут > 21 сут → перекрёстный дизайн НЕЦЕЛЕСООБРАЗЕН. Общая продолжительность 2-периодного кроссовера составила бы ≥50 сут — неприемлемая нагрузка на участников.
+        4. ВЫБОР ДИЗАЙНА: Параллельный дизайн обязателен (Решение ЕЭК № 85; руководство FDA). Washout = 25 сут > 21 сут делает кроссовер практически нереализуемым. Каждый субъект получает только один препарат; перенос невозможен.
+        5. ОБОСНОВАНИЕ РАЗМЕРА ВЫБОРКИ: N = 150 учитывает sigma_total² = 3×sigma_intra², z_α/2 = 1,96, z_β = 0,842, 20% выбывание. Кроссовер при CVintra = 22% потребовал бы N = 18, но исключён из-за washout > 21 сут.
+
+        **ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:**
+        1. **Вычислить washout = ⌈5×T½/24⌉ дней. Если washout > 21 дня (T½ > ~101 ч) → использовать "Параллельный". Если washout ≤ 21 дня → перекрёстный ДОПУСТИМ.**
+        2. Если CVintra отсутствует в данных → использовать типичное значение 20–25% и явно указать это допущение в обосновании
+        3. CVintra влияет только на выбор стандартного/реплицированного кроссовера и размер выборки — не переключает кроссовер→параллельный самостоятельно
+        4. Использовать ТОЛЬКО числа для CV_INTRA и T_HALF (без единиц)
+        5. Писать REASONING на русском языке. Все 5 разделов обязательны. Быть аналитичным, а не просто описательным.
+
+        **ТРЕБОВАНИЯ К ФОРМАТУ:**
+        - DESIGN должен быть одним из: "2×2 Cross-over", "3-way Replicate", "4-way Replicate", "Параллельный"
+        - Названия полей (DESIGN:, N_SUBJECTS: и т.д.) должны быть на английском точно как показано
+        - Разделы REASONING должны быть пронумерованы 1–5 точно как показано"""
 
     def _build_prompt(
         self,
@@ -372,69 +397,72 @@ class DesignRecommender:
 
         summary = "\n".join(summary_lines)
 
-        # Add pre-calculated sample sizes information
+        # Предрасчитанные размеры выборки
         sample_size_info = ""
         if sample_sizes:
-            sample_size_info = "\n\n📊 PRE-CALCULATED SAMPLE SIZES (based on CVintra = {:.1f}%):\n".format(cv_used if cv_used else 22.0)
+            sample_size_info = "\n\n📊 ПРЕДРАСЧИТАННЫЕ РАЗМЕРЫ ВЫБОРКИ (на основе CVintra = {:.1f}%):\n".format(cv_used if cv_used else 22.0)
             for design, sizes in sample_sizes.items():
-                sample_size_info += f"  • {design}: {sizes['n_with_dropout']} subjects (with 20% dropout)\n"
-            sample_size_info += "\n⚠️ Consider these sizes when choosing design! Too large N may be impractical.\n"
+                sample_size_info += f"  • {design}: {sizes['n_with_dropout']} участников (с учётом 20% выбывания)\n"
+            sample_size_info += "\n⚠️ Учтите эти размеры при выборе дизайна! Слишком большой N может быть нецелесообразен.\n"
 
         # ── Интерпретация T½ ──────────────────────────────────────────────────
         t_half_info = ""
         if t_half_used:
             washout_h  = t_half_used * 5
             washout_d  = washout_h / 24
+            washout_days_ceil = math.ceil(washout_d)
             t_half_info = (
-                f"\n🕐 HALF-LIFE ANALYSIS:\n"
-                f"   T½ = {t_half_used} hours\n"
-                f"   Minimum washout (5×T½) = {washout_h:.0f} hours = {washout_d:.1f} days\n"
+                f"\n🕐 АНАЛИЗ ПЕРИОДА ПОЛУВЫВЕДЕНИЯ:\n"
+                f"   T½ = {t_half_used} ч\n"
+                f"   Минимальный период отмывки (5×T½) = {washout_h:.0f} ч = {washout_d:.1f} сут (≈{washout_days_ceil} сут)\n"
             )
-            if t_half_used > 24:
+            if washout_days_ceil > 21:
                 t_half_info += (
-                    f"   ⚠️ T½ > 24h → if crossover were used, washout of ≥{washout_d:.0f} days would be required between periods.\n"
-                    f"   Total crossover study duration would be ≥{washout_d * 2:.0f} days — impractical.\n"
-                    f"   → PARALLEL DESIGN MANDATORY (per FDA guidance and EAEU Decision 85)\n"
-                    f"   NOTE: Parallel design has NO washout period — each subject receives only ONE product.\n"
-                    f"   The washout calculation above explains WHY crossover is ruled out, not a property of parallel design.\n"
+                    f"   ⚠️ Период отмывки {washout_days_ceil} сут > 21 сут — перекрёстный дизайн НЕЦЕЛЕСООБРАЗЕН.\n"
+                    f"   Полная продолжительность 2-периодного кроссовера составила бы ≥{washout_days_ceil * 2} сут — неприемлемо.\n"
+                    f"   → ПАРАЛЛЕЛЬНЫЙ ДИЗАЙН ОБЯЗАТЕЛЕН (согласно руководству FDA и Решению ЕЭК № 85)\n"
+                    f"   ПРИМЕЧАНИЕ: Параллельный дизайн НЕ имеет периода отмывки — каждый субъект получает только ОДИН препарат.\n"
                 )
             else:
-                t_half_info += f"   ✓ T½ < 24h → crossover washout is feasible ({washout_d:.1f} days)\n"
+                t_half_info += (
+                    f"   ✓ Период отмывки {washout_days_ceil} сут ≤ 21 сут → перекрёстный дизайн ВЫПОЛНИМ.\n"
+                    f"   Пороговое значение для перехода к параллельному: период отмывки > 21 сут (T½ > ~101 ч).\n"
+                )
 
         # ── Интерпретация CVintra ─────────────────────────────────────────────
         cv_info = ""
         if cv_used:
             if cv_used < 30:
-                cv_category = "LOW variability (<30%): standard 80–125% BE criteria apply; 2×2 crossover is sufficient"
-                cv_implication = "2×2 Cross-over is the most efficient design. No need for replicated design or widened criteria."
+                cv_category = "НИЗКАЯ вариабельность (<30%): применяются стандартные критерии БЭ 80–125%; достаточен дизайн 2×2"
+                cv_implication = "2×2 Перекрёстный — наиболее эффективный дизайн. Реплицированный дизайн и расширенные критерии не нужны."
             elif cv_used < 50:
-                cv_category = "MODERATE-HIGH variability (30–50%): HVDP category; RSABE applicable"
-                cv_implication = ("Replicated design (3-way or 4-way) enables reference-scaled Cmax criteria (widened to 69.84–143.19%), "
-                                  "reducing required N significantly compared to parallel.")
+                cv_category = "УМЕРЕННО-ВЫСОКАЯ вариабельность (30–50%): категория ВПЛП; применим RSABE"
+                cv_implication = ("Реплицированный дизайн (3-периодный или 4-периодный) позволяет применять масштабированные критерии Cmax "
+                                  "(расширенные до 69,84–143,19%), значительно снижая требуемый N по сравнению с параллельным.")
             else:
-                cv_category = "HIGH variability (>50%): highly variable drug; replicated design strongly indicated"
-                cv_implication = "4-way replicated design with full RSABE is the most statistically powerful approach."
+                cv_category = "ВЫСОКАЯ вариабельность (>50%): высоковариабельный препарат; реплицированный дизайн настоятельно показан"
+                cv_implication = "4-периодный реплицированный дизайн с полным RSABE — наиболее статистически мощный подход."
             cv_info = (
-                f"\n📊 CVintra ANALYSIS:\n"
+                f"\n📊 АНАЛИЗ CVintra:\n"
                 f"   CVintra = {cv_used:.1f}%\n"
-                f"   Category: {cv_category}\n"
-                f"   Implication: {cv_implication}\n"
+                f"   Категория: {cv_category}\n"
+                f"   Следствие: {cv_implication}\n"
             )
 
         prompt = f"""{summary}{t_half_info}{cv_info}{sample_size_info}
 
-            Based on this data and the regulatory framework provided:
-            1. Choose the CVintra value to use (from data, or justify using typical ~22%)
-            2. Apply the T½ rule FIRST: if T½ > 24h → Parallel is mandatory
-            3. If crossover is feasible, select 2×2 / 3-way / 4-way based on CVintra
-            4. Write REASONING in English with all 5 mandatory sections.
-               Go beyond just stating numbers — explain the clinical and regulatory logic:
-               - Why is the washout feasible or not? (show the 5×T½ calculation explicitly)
-               - What does CVintra mean for the choice between standard vs. widened criteria?
-               - What would happen if a different design were chosen? (compare alternatives)
-               - Quote specific regulatory requirements that determine the decision.
+            На основе этих данных и нормативной базы:
+            1. Выберите значение CVintra (из данных или обоснуйте использование типичного ~22%)
+            2. Сначала примените правило T½: если T½ > 24 ч → параллельный дизайн обязателен
+            3. Если перекрёстный дизайн выполним, выберите 2×2 / 3-периодный / 4-периодный на основе CVintra
+            4. Напишите REASONING на русском языке со всеми 5 обязательными разделами.
+               Выходите за рамки простого перечисления чисел — объясняйте клиническую и регуляторную логику:
+               - Почему период отмывки выполним или нет? (явно покажите расчёт 5×T½)
+               - Что означает CVintra для выбора между стандартными и расширенными критериями?
+               - Что произошло бы при другом дизайне? (сравните альтернативы)
+               - Сослаться на конкретные регуляторные требования, определяющие решение.
 
-            Respond in the EXACT format specified in system prompt."""
+            Отвечайте в точном формате, указанном в системном промпте."""
         return prompt
 
     def _parse_response(self, response: str, records: List[PKRecord]) -> Dict:

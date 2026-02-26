@@ -76,7 +76,7 @@ class AnalyzeRequest(BaseModel):
     age_max: Optional[int] = None
     constraints: Optional[list] = None
     max_pubmed: int = 10
-    max_fda: int = 3
+    max_fda: int = 10
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -90,11 +90,30 @@ def _run_analysis(job_id: str, params: dict):
     jobs[job_id]["status"] = "running"
     try:
         # ── 1. Normalize INN ──────────────────────────────────────────────────
-        _send(job_id, "step", step="init", message="Нормализация МНН препарата...")
+        _send(job_id, "step", step="init", message="Нормализация ИНН препарата...")
         drug_input = params["drug"]
         inn = normalize_inn(drug_input)
         if inn.lower() != drug_input.lower():
-            _send(job_id, "log", message=f"МНН нормализован: «{drug_input}» → «{inn}»")
+            _send(job_id, "log", message=f"ИНН нормализован: «{drug_input}» → «{inn}»")
+
+        # Если после нормализации осталась кириллица — LLM переводит в English INN
+        if not inn.isascii():
+            _send(job_id, "log", message=f"Кириллическое название — запрашиваем перевод у LLM...")
+            try:
+                _llm = get_llm_provider()
+                _translated = _llm.generate(
+                    f"Переведи название препарата «{drug_input}» в его английский МНН (INN, International Nonproprietary Name).\n"
+                    f"Ответь ТОЛЬКО английским МНН, ничего больше. Только одно слово или короткая фраза на латинице.",
+                    system_prompt="Ты фармаколог-эксперт. Отвечай только английским МНН препарата, без пояснений."
+                ).strip().lower()
+                if _translated and _translated.isascii() and len(_translated) > 2:
+                    _send(job_id, "log", message=f"LLM перевёл: «{drug_input}» → «{_translated}»")
+                    inn = _translated
+                else:
+                    _send(job_id, "log", message=f"LLM не смог перевести, используем исходное название")
+            except Exception as _e:
+                _send(job_id, "log", message=f"Перевод через LLM недоступен: {_e}")
+
         drug = inn
 
         # ── 2. Extract PK data ────────────────────────────────────────────────

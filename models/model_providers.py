@@ -212,6 +212,62 @@ class GeminiProvider(LLMProvider):
         return result["candidates"][0]["content"]["parts"][0]["text"]
 
 
+class YandexGPTProvider(LLMProvider):
+    """
+    Провайдер для Yandex Cloud AI Studio (OpenAI-совместимый Responses API).
+
+    Документация: https://yandex.cloud/ru/docs/foundation-models/
+    Консоль: https://console.yandex.cloud/
+
+    Аутентификация:
+      - API-ключ: IAM → Сервисные аккаунты → выбрать аккаунт → API-ключи → Создать
+      - Folder ID: главная страница консоли → ID каталога
+
+    Доступные модели:
+      - yandexgpt-lite/latest — быстрая, дешёвая
+      - yandexgpt/latest      — лучшее качество (рекомендуется)
+      - yandexgpt-32k/latest  — для длинных контекстов
+
+    Пример в .env:
+        YANDEX_API_KEY=AQVN...
+        YANDEX_FOLDER_ID=b1g...
+        YANDEX_MODEL=yandexgpt/latest
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        folder_id: str,
+        model: str = "yandexgpt/latest",
+        temperature: float = 0.3,
+        max_tokens: int = 4000,
+    ):
+        import openai
+        self.folder_id = folder_id
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.client = openai.OpenAI(
+            api_key=api_key,
+            base_url="https://ai.api.cloud.yandex.net/v1",
+            project=folder_id,
+        )
+
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        response = self.client.chat.completions.create(
+            model=f"gpt://{self.folder_id}/{self.model}",
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        return response.choices[0].message.content
+
+
 class MockProvider(LLMProvider):
     """Mock провайдер для тестирования без API."""
 
